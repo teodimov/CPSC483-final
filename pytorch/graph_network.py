@@ -1,5 +1,3 @@
-# graph_network.py
-
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -20,12 +18,23 @@ class MLP(nn.Module):
         super().__init__()
         layers = []
         current_size = input_size
+        
+        # Initialize hidden layers with ReLU activation
         for _ in range(num_hidden_layers):
-            layers.append(nn.Linear(current_size, hidden_size))
+            linear = nn.Linear(current_size, hidden_size)
+            # TF-like initialization
+            nn.init.xavier_uniform_(linear.weight)
+            nn.init.zeros_(linear.bias)
+            layers.append(linear)
             layers.append(nn.ReLU())
             current_size = hidden_size
+            
         # Output layer (no activation)
-        layers.append(nn.Linear(current_size, output_size))
+        output_layer = nn.Linear(current_size, output_size)
+        nn.init.xavier_uniform_(output_layer.weight)
+        nn.init.zeros_(output_layer.bias)
+        layers.append(output_layer)
+        
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -38,6 +47,9 @@ def build_mlp_with_layer_norm(input_size: int, hidden_size: int, num_hidden_laye
     """
     mlp = MLP(input_size, hidden_size, num_hidden_layers, output_size)
     layer_norm = nn.LayerNorm(output_size)
+    # Initialize LayerNorm parameters
+    nn.init.ones_(layer_norm.weight)
+    nn.init.zeros_(layer_norm.bias)
     return nn.Sequential(mlp, layer_norm)
 
 
@@ -158,9 +170,16 @@ class EncodeProcessDecode(nn.Module):
         self._processor_networks = nn.ModuleList()
         self._decoder_network = None
 
+    def _broadcast_globals_to_nodes(self, data):
+        """Broadcasts global features to all nodes."""
+        if hasattr(data, 'globals') and data.globals is not None:
+            num_nodes = data.x.size(0)
+            return data.globals.expand(num_nodes, -1)
+        return None
+
     def initialize_encoder(self, node_in_dim: int, edge_in_dim: int, global_in_dim: int = 0):
         """
-        Initializes the encoder and processor networks once the input dimensions are KNOWN.
+        Initializes the encoder and processor networks once the input dimensions are known.
         This MUST be called before the first forward pass.
         """
         self.node_in_dim = node_in_dim
@@ -187,14 +206,8 @@ class EncodeProcessDecode(nn.Module):
         )
 
         # Processor networks
-        # After encoding, edges and nodes have dimension latent_size.
-        # Edge model input: sender, receiver, edge (if present)
-        # If no initial edge features, after encoding, edges might be None or latent_size.
-        # We handle edge model in processors similarly:
+        # After encoding, edges and nodes have dimension latent_size
         for _ in range(self._num_message_passing_steps):
-            # If we have an edge_model in the encoder, then edges have latent_size now.
-            # If no edge features initially (encoder has no edge model), edges might be None.
-            # We'll still allow an edge model in the processor that uses just sender+receiver features.
             if self._encoder_network.edge_model is not None:
                 # Edges have latent_size: so input is sender+receiver+edge = 3*latent_size
                 edge_input_dim = 3 * self._latent_size
@@ -202,13 +215,13 @@ class EncodeProcessDecode(nn.Module):
                     edge_input_dim, self._mlp_hidden_size, self._mlp_num_hidden_layers, self._latent_size
                 )
             else:
-                # No edge model in the encoder means no edge latent from encoding.
-                # In that case, edge input dim = sender+receiver only = 2*latent_size
+                # No edge model in the encoder means no edge latent from encoding
+                # Edge input dim = sender+receiver only = 2*latent_size
                 processor_edge_model_fn = lambda: build_mlp_with_layer_norm(
                     2 * self._latent_size, self._mlp_hidden_size, self._mlp_num_hidden_layers, self._latent_size
                 )
 
-            node_input_dim = 2 * self._latent_size
+            node_input_dim = 2 * self._latent_size  # Current + aggregated
             processor_node_model_fn = lambda: build_mlp_with_layer_norm(
                 node_input_dim, self._mlp_hidden_size, self._mlp_num_hidden_layers, self._latent_size
             )
@@ -243,11 +256,10 @@ class EncodeProcessDecode(nn.Module):
         return self._decode(latent_graph_m)
 
     def _encode(self, data):
-        # If we have globals, broadcast them to nodes
-        if hasattr(data, 'globals') and data.globals is not None:
-            num_nodes = data.x.size(0)
-            globals_expanded = data.globals.expand(num_nodes, -1)
-            data.x = torch.cat([data.x, globals_expanded], dim=-1)
+        # Broadcast globals to nodes if present
+        broadcasted_globals = self._broadcast_globals_to_nodes(data)
+        if broadcasted_globals is not None:
+            data.x = torch.cat([data.x, broadcasted_globals], dim=-1)
             data.globals = None
 
         latent_graph_0 = self._encoder_network(data)
