@@ -1,110 +1,141 @@
-# Learning to Simulate Complex Physics with Graph Networks (ICML 2020)
+# Learning to Simulate Physics
 
-ICML poster: [icml.cc/virtual/2020/poster/6849](https://icml.cc/virtual/2020/poster/6849)
+This project provides an implementation for learning to simulate particle-based physics, adapted from [Learn-to-Simulate](https://github.com/Emiyalzn/Learn-to-Simulate/tree/main).
 
-Video site: [sites.google.com/view/learning-to-simulate](https://sites.google.com/view/learning-to-simulate)
+## Overview
 
-ArXiv: [arxiv.org/abs/2002.09405](https://arxiv.org/abs/2002.09405)
+The system learns to simulate particle-based physics by using Graph Neural Networks (GNNs) to model particle interactions. It supports different types of simulations including water drops and water ramps.
 
-If you use the code here please cite this paper:
+## Features
 
-    @inproceedings{sanchezgonzalez2020learning,
-      title={Learning to Simulate Complex Physics with Graph Networks},
-      author={Alvaro Sanchez-Gonzalez and
-              Jonathan Godwin and
-              Tobias Pfaff and
-              Rex Ying and
-              Jure Leskovec and
-              Peter W. Battaglia},
-      booktitle={International Conference on Machine Learning},
-      year={2020}
-    }
+- Multiple GNN architectures (e.g., GCN and GAT)
+- Single-step and rollout predictions
+- Support for different particle types
+- Noise injection for robustness
+- Checkpoint saving and loading
+- Validation during training
 
+## Installation
 
-## Example usage: train a model and display a trajectory
+1. Clone the repository:
+```bash
+git clone https://github.com/Elder453/CPSC483-final.git
+cd CPSC483-final
+```
 
-![WaterRamps rollout](images/water_ramps_rollout.gif)
+2. Install dependencies:
+```bash
+conda env create -f environment.yml
+```
 
-After downloading the repo, and from the parent directory. Install dependencies:
+3. Create necessary directories:
+```bash
+mkdir -p ./datasets
+mkdir -p ./models
+mkdir -p ./rollouts
+```
 
-    pip install -r learning_to_simulate/requirements.txt
-    mkdir -p /tmp/rollous
+## Dataset
 
-Download dataset (e.g. WaterRamps):
+1. Download a dataset (e.g., Water or WaterDropSample):
+```bash
+bash ./download_dataset.sh WaterDropSample ./datasets
+```
 
-    mkdir -p /tmp/datasets
-    bash ./learning_to_simulate/download_dataset.sh WaterRamps /tmp/datasets
+## Usage
 
-Train a model:
+### Training
 
-    mkdir -p /tmp/models
-    python -m learning_to_simulate.train \
-        --data_path=/tmp/datasets/WaterRamps \
-        --model_path=/tmp/models/WaterRamps
+Train a model with default parameters:
+```bash
+python main.py --mode train --dataset WaterDropSample
+```
 
-Generate some trajectory rollouts on the test set:
+For faster training with optimized parameters:
+```bash
+python main.py --mode train \
+  --dataset WaterDropSample \
+  --batch_size 2 \
+  --max_episodes 100 \
+  --test_step 500 \
+  --lr 1e-4 \
+  --noise_std 0.0003 \
+  --message_passing_steps 5
+```
 
-    mkdir -p /tmp/rollouts
-    python -m learning_to_simulate.train \
-        --mode="eval_rollout" \
-        --data_path=/tmp/datasets/WaterRamps \
-        --model_path=/tmp/models/WaterRamps \
-        --output_path=/tmp/rollouts/WaterRamps
+### Evaluation
 
-Plot a trajectory:
+Evaluate single-step predictions:
+```bash
+python main.py --mode eval \
+  --dataset WaterDropSample \
+  --message_passing_steps 5 \
+  --eval_split test
+```
 
-    python -m learning_to_simulate.render_rollout \
-        --rollout_path=/tmp/rollouts/WaterRamps/rollout_test_0.pkl
+Generate trajectory rollouts:
+```bash
+python main.py --mode eval_rollout \
+  --dataset WaterDropSample \
+  --message_passing_steps 5 \
+  --eval_split test
+```
 
+## Key Parameters
 
-## Datasets
+- `--mode`: Training or evaluation mode (`train`, `eval`, `eval_rollout`)
+- `--dataset`: Name of dataset to use
+- `--batch_size`: Number of samples per batch
+- `--max_episodes`: Number of training episodes
+- `--message_passing_steps`: Number of GNN message passing steps
+- `--gnn_type`: Type of GNN to use (`gcn`, `gat`)
+- `--noise_std`: Standard deviation of noise injection
+- `--lr`: Learning rate
 
-Datasets are available to download via:
+## Directory Structure
 
-* Metadata file with dataset information (sequence length, dimensionality, box bounds, default connectivity radius, statistics for normalization, ...):
+```
+/CPSC483-final/
+├── datasets/           # Dataset storage
+│   └── WaterDropSample/
+├── models/            # Saved model checkpoints
+│   └── WaterDropSample/
+└── rollouts/          # Generated rollouts
+    └── WaterDropSample/
+```
 
-  `https://storage.googleapis.com/learning-to-simulate-complex-physics/Datasets/{DATASET_NAME}/metadata.json`
+## Notes
 
-* TFRecords containing data for all trajectories (particle types, positions, global context, ...):
+- The code assumes CUDA availability. For CPU-only usage, modify device settings accordingly.
+- Training time varies based on dataset size and computational resources.
+- Best checkpoints are automatically saved during training.
+- Parameters may need adjustment based on your specific use case.
 
-  `https://storage.googleapis.com/learning-to-simulate-complex-physics/Datasets/{DATASET_NAME}/{DATASET_SPLIT}.tfrecord`
+## Acknowledgments
 
-Where:
+This PyTorch implementation is adapted from [Learn-to-Simulate](https://github.com/Emiyalzn/Learn-to-Simulate/tree/main). We thank the original authors for their work.
 
-* `{DATASET_SPLIT}` is one of:
-  * `train`
-  * `valid`
-  * `test`
+The original work was done by [DeepMind](https://github.com/deepmind/deepmind-research), written in TensorFlow and published at ICML2020.
 
-* `{DATASET_NAME}` one of the datasets following the naming used in the paper:
-  * `WaterDrop`
-  * `Water`
-  * `Sand`
-  * `Goop`
-  * `MultiMaterial`
-  * `RandomFloor`
-  * `WaterRamps`
-  * `SandRamps`
-  * `FluidShake`
-  * `FluidShakeBox`
-  * `Continuous`
-  * `WaterDrop-XL`
-  * `Water-3D`
-  * `Sand-3D`
-  * `Goop-3D`
+```shell
+@article
+{DBLP:journals/corr/abs-2002-09405,
+  author    = {Alvaro Sanchez{-}Gonzalez and
+               Jonathan Godwin and
+               Tobias Pfaff and
+               Rex Ying and
+               Jure Leskovec and
+               Peter W. Battaglia},
+  title     = {Learning to Simulate Complex Physics with Graph Networks},
+  journal   = {CoRR},
+  volume    = {abs/2002.09405},
+  year      = {2020},
+  url       = {https://arxiv.org/abs/2002.09405},
+  eprinttype = {arXiv},
+  eprint    = {2002.09405},
+  timestamp = {Mon, 02 Mar 2020 16:46:06 +0100},
+  biburl    = {https://dblp.org/rec/journals/corr/abs-2002-09405.bib},
+  bibsource = {dblp computer science bibliography, https://dblp.org}
+}
+```
 
-The provided script `./download_dataset.sh` may be used to download all files from each dataset into a folder given its name.
-
-An additional smaller dataset `WaterDropSample`, which includes only the first two trajectories of `WaterDrop` for each split, is provided for debugging purposes.
-
-
-## Code structure
-
-* `train.py`: Script for training, evaluating and generating rollout trajectories.
-* `learned_simulator.py`: Implementation of the learnable one-step model that returns the next position of the particles given inputs. It includes data preprocessing, Euler integration, and a helper method for building normalized training outputs and targets.
-* `graph_network.py`: Implementation of the graph network used at the core of the learnable part of the model.
-* `render_rollout.py`: Visualization code for displaying rollouts such as the example animation.
-* `{noise/connectivity/reading}_utils.py`: Util modules for adding noise to the inputs, computing graph connectivity and reading datasets form TFRecords.
-*  `model_demo.py`: example connecting the model to input dummy data.
-
-Note this is a reference implementation not designed to scale up to TPUs (unlike the one used for the paper). We have tested that the model can be trained with a batch size of 2 on a single NVIDIA V100 to reach similar qualitative performance (except for the XL and 3D datasets due to OOM).
