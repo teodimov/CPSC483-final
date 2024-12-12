@@ -31,7 +31,6 @@ class LearnedSimulator(nn.Module):
         device: str,
         particle_type_embedding_size: int,
         args,
-        name: str = "LearnedSimulator"
     ):
         """Initialize the simulator.
         

@@ -53,8 +53,12 @@ class BaseDataset(Dataset):
         
         return positions, particle_types, step_context
 
-    def _prepare_features(self, positions: List, particle_types: List, 
-                         step_context: Optional[List]) -> Dict[str, List[torch.Tensor]]:
+    def _prepare_features(
+        self,
+        positions: List,
+        particle_types: List,
+        step_context: Optional[List]
+    ) -> Dict[str, List[torch.Tensor]]:
         """Converts numpy arrays to torch tensors."""
         features = {
             'positions': list(map(torch.tensor, positions)),
@@ -167,4 +171,3 @@ def prepare_rollout_inputs(features: Dict[str, torch.Tensor]) -> Tuple[Dict[str,
         output_dict['step_context'] = features['step_context']
     
     return output_dict, pos[:, -1]
-    

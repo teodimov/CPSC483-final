@@ -13,8 +13,13 @@ from rollout import rollout
 from utils import fix_seed, _combine_std, _read_metadata
 from utils import *
 
-def _get_simulator(model_kwargs: dict, metadata: dict, acc_noise_std: float, 
-                  vel_noise_std: float, args) -> 'LearnedSimulator':
+def _get_simulator(
+    model_kwargs: dict,
+    metadata: dict,
+    acc_noise_std: float,
+    vel_noise_std: float,
+    args
+) -> 'LearnedSimulator':
     """Initialize simulator with proper normalization statistics.
     
     Args:
@@ -194,9 +199,13 @@ def eval_rollout(args):
         num_message_passing_steps=args.message_passing_steps,
     )
 
-    simulator = _get_simulator(model_kwargs, metadata,
-                               vel_noise_std=args.noise_std,
-                               acc_noise_std=args.noise_std, args=args)
+    simulator = _get_simulator(
+        model_kwargs,
+        metadata,
+        vel_noise_std=args.noise_std,
+        acc_noise_std=args.noise_std,
+        args=args
+    )
 
     num_steps = metadata['sequence_length'] - INPUT_SEQUENCE_LENGTH
 

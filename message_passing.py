@@ -21,8 +21,12 @@ class EdgeModel(nn.Module):
         super().__init__()
         self.edge_mlp = edge_mlp
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, 
-                edge_attr: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_attr: torch.Tensor
+    ) -> torch.Tensor:
         """
         Args:
             x: Node features [N, F_x], where N is the number of nodes
@@ -55,8 +59,12 @@ class NodeModel(nn.Module):
         super().__init__()
         self.node_mlp = node_mlp
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, 
-                edge_attr: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_attr: torch.Tensor
+    ) -> torch.Tensor:
         """
         Args:
             x: Node features [N, F_x], where N is the number of nodes

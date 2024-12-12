@@ -6,20 +6,35 @@ import numpy as np
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Render rollout.")
-    parser.add_argument('--rollout_path', default=None, type=str, help='Path to rollout pickle file.')
-    parser.add_argument('--step_stride', default=3, type=int, help='Stride of steps to skip.')
-    parser.add_argument('--block_on_show', default=True, type=bool, help='For test purposes.')
+    parser.add_argument(
+        '--rollout_path',
+        default=None,
+        type=str,
+        help='Path to rollout pickle file.'
+    )
+    parser.add_argument(
+        '--step_stride',
+        default=3,
+        type=int,
+        help='Stride of steps to skip.'
+    )
+    parser.add_argument(
+        '--block_on_show',
+        default=True,
+        type=bool,
+        help='For test purposes.'
+    )
 
     args = parser.parse_args()
 
     return args
 
 TYPE_TO_COLOR = {
-    3: "black", # Boundary particles.
-    0: "green", # Rigid solids.
+    3: "black",   # Boundary particles.
+    0: "green",   # Rigid solids.
     7: "magenta", # Goop.
-    6: "gold", # Sand.
-    5: "blue", # Water.
+    6: "gold",    # Sand.
+    5: "blue",    # Water.
 }
 
 def main(args):
@@ -63,7 +78,12 @@ def main(args):
                 outputs.append(line)
         return outputs
 
-    anim = animation.FuncAnimation(fig, update, frames=np.arange(0, num_steps, args.step_stride), interval=10)
+    anim = animation.FuncAnimation(
+        fig,
+        update,
+        frames=np.arange(0, num_steps, args.step_stride),
+        interval=10
+    )
     anim.save("rollout.gif", writer='imagemagick', fps=10)
     # plt.show(block=args.block_on_show)
 

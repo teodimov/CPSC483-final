@@ -9,8 +9,13 @@ from dataclasses import dataclass
 
 class MLP(nn.Module):
     """Multi-layer perceptron with configurable hidden layers."""
-    def __init__(self, input_size: int, hidden_size: int, 
-                 num_hidden_layers: int, output_size: int):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_hidden_layers: int,
+        output_size: int
+    ):
         super().__init__()
         self.lins = nn.ModuleList()
         
@@ -30,17 +35,18 @@ class MLP(nn.Module):
 class EncodeProcessDecode(nn.Module):
     """Encode-Process-Decode architecture for graph neural networks."""
     
-    def __init__(self,
-                 node_input_size: int,
-                 edge_input_size: int,
-                 latent_size: int,
-                 mlp_hidden_size: int,
-                 mlp_num_hidden_layers: int,
-                 num_message_passing_steps: int,
-                 output_size: int,
-                 device: str,
-                 args,
-                 name: str = "EncodeProcessDecode"):
+    def __init__(
+        self,
+        node_input_size: int,
+        edge_input_size: int,
+        latent_size: int,
+        mlp_hidden_size: int,
+        mlp_num_hidden_layers: int,
+        num_message_passing_steps: int,
+        output_size: int,
+        device: str,
+        args,
+    ):
         super().__init__()
         
         # Store configuration

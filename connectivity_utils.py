@@ -3,8 +3,11 @@ from sklearn import neighbors
 import torch
 from typing import Tuple, List, Union
 
-def _compute_connectivity(positions: np.ndarray, radius: float, 
-                        add_self_edges: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+def _compute_connectivity(
+    positions: np.ndarray,
+    radius: float,
+    add_self_edges: bool = True
+) -> Tuple[np.ndarray, np.ndarray]:
     """Get the indices of connected edges with radius connectivity.
     Args:
         positions: Positions of nodes in the graph. [num_nodes_in_graph, num_dims]
@@ -27,9 +30,13 @@ def _compute_connectivity(positions: np.ndarray, radius: float,
 
     return senders, receivers
 
-def compute_connectivity_for_batch(positions: np.ndarray, n_node: np.ndarray, 
-                                 radius: float, add_self_edges: bool = True, 
-                                 device: str = 'cpu') -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def compute_connectivity_for_batch(
+    positions: np.ndarray, 
+    n_node: np.ndarray,
+    radius: float,
+    add_self_edges: bool = True,
+    device: str = 'cpu'
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """`compute_connectivity` for a batch of graphs.
     Args:
         positions: [num_nodes_in_batch, num_dims]
