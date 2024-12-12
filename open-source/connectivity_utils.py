@@ -1,8 +1,10 @@
 import numpy as np
 from sklearn import neighbors
 import torch
+from typing import Tuple, List, Union
 
-def _compute_connectivity(positions, radius, add_self_edges=True):
+def _compute_connectivity(positions: np.ndarray, radius: float, 
+                        add_self_edges: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """Get the indices of connected edges with radius connectivity.
     Args:
         positions: Positions of nodes in the graph. [num_nodes_in_graph, num_dims]
@@ -25,7 +27,9 @@ def _compute_connectivity(positions, radius, add_self_edges=True):
 
     return senders, receivers
 
-def compute_connectivity_for_batch(positions, n_node, radius, add_self_edges=True, device='cpu'):
+def compute_connectivity_for_batch(positions: np.ndarray, n_node: np.ndarray, 
+                                 radius: float, add_self_edges: bool = True, 
+                                 device: str = 'cpu') -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """`compute_connectivity` for a batch of graphs.
     Args:
         positions: [num_nodes_in_batch, num_dims]
@@ -57,8 +61,11 @@ def compute_connectivity_for_batch(positions, n_node, radius, add_self_edges=Tru
         num_nodes_in_previous_graphs += num_nodes_graph_i
 
     # Concatenate all of the results.
-    senders = torch.tensor(np.concatenate(senders_list, axis=0).astype(np.int32), dtype=torch.int64, device=device)
-    receivers = torch.tensor(np.concatenate(receivers_list, axis=0).astype(np.int32), dtype=torch.int64, device=device)
-    n_edge = torch.tensor(np.stack(n_edge_list).astype(np.int32), dtype=torch.int64, device=device)
+    senders = torch.tensor(np.concatenate(senders_list, axis=0).astype(np.int32), 
+                          dtype=torch.int64, device=device)
+    receivers = torch.tensor(np.concatenate(receivers_list, axis=0).astype(np.int32), 
+                           dtype=torch.int64, device=device)
+    n_edge = torch.tensor(np.stack(n_edge_list).astype(np.int32), 
+                         dtype=torch.int64, device=device)
 
     return senders, receivers, n_edge
