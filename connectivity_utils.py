@@ -1,7 +1,7 @@
+from typing import Tuple
 import numpy as np
-from sklearn import neighbors
 import torch
-from typing import Tuple, List, Union
+from sklearn.neighbors import KDTree
 
 def _compute_connectivity(
     positions: np.ndarray,
@@ -17,10 +17,10 @@ def _compute_connectivity(
         senders indices [num_edges_in_graph]
         receivers indices [num_edges_in_graph]
     """
-    tree = neighbors.KDTree(positions)
+    tree = KDTree(positions)
     receivers_list = tree.query_radius(positions, r=radius)
-    num_nodes = len(positions)
-    senders = np.repeat(range(num_nodes), [len(a) for a in receivers_list])
+    num_nodes = positions.shape[0]
+    senders = np.repeat(np.arange(num_nodes), [len(a) for a in receivers_list])
     receivers = np.concatenate(receivers_list, axis=0)
 
     if not add_self_edges:
@@ -48,31 +48,31 @@ def compute_connectivity_for_batch(
         receiver indices [num_edges_in_batch]
         number of edges per graph [num_graphs_in_batch]
     """
-    positions_per_graph_list = np.split(positions, np.cumsum(n_node[:-1]), axis=0)
+    n_graphs = len(n_node)
     receivers_list = []
     senders_list = []
-    n_edge_list = []
+    n_edge_list = np.empty(n_graphs, dtype=np.int32)
+    
+    positions_per_graph_list = np.split(positions, np.cumsum(n_node[:-1]), axis=0)
     num_nodes_in_previous_graphs = 0
 
     # Compute connectivity for each graph in the batch.
-    for positions_graph_i in positions_per_graph_list:
+    for i, positions_graph_i in enumerate(positions_per_graph_list):
         senders_graph_i, receivers_graph_i = _compute_connectivity(
             positions_graph_i, radius, add_self_edges)
-        num_edges_graph_i = len(senders_graph_i)
-        n_edge_list.append(num_edges_graph_i)
+        
+        n_edge_list[i] = len(senders_graph_i)
 
         receivers_list.append(receivers_graph_i + num_nodes_in_previous_graphs)
         senders_list.append(senders_graph_i + num_nodes_in_previous_graphs)
 
-        num_nodes_graph_i = len(positions_graph_i)
-        num_nodes_in_previous_graphs += num_nodes_graph_i
+        num_nodes_in_previous_graphs += positions_graph_i.shape[0]
 
     # Concatenate all of the results.
-    senders = torch.tensor(np.concatenate(senders_list, axis=0).astype(np.int32), 
+    senders = torch.tensor(np.concatenate(senders_list, axis=0),
                           dtype=torch.int64, device=device)
-    receivers = torch.tensor(np.concatenate(receivers_list, axis=0).astype(np.int32), 
+    receivers = torch.tensor(np.concatenate(receivers_list, axis=0),
                            dtype=torch.int64, device=device)
-    n_edge = torch.tensor(np.stack(n_edge_list).astype(np.int32), 
-                         dtype=torch.int64, device=device)
+    n_edge = torch.tensor(n_edge_list, dtype=torch.int64, device=device)
 
     return senders, receivers, n_edge

@@ -48,19 +48,18 @@ bash ./download_dataset.sh WaterDropSample ./datasets
 
 Train a model with default parameters:
 ```bash
-python main.py --mode train --dataset WaterDropSample
-```
-
-For faster training with optimized parameters:
-```bash
-python main.py --mode train \
-  --dataset WaterDropSample \
-  --batch_size 2 \
-  --max_episodes 100 \
-  --test_step 500 \
-  --lr 1e-4 \
-  --noise_std 0.0003 \
-  --message_passing_steps 5
+python main.py 
+  --mode=train \
+  --dataset=Water \
+  --batch_size=2 \
+  --model_path="models" \
+  --gnn_type="gcn" \
+  --message_passing_steps=10 \
+  --noise_std=0.0003 \
+  --num_epochs=10 \
+  --seed=483 \
+  --lr=1e-4 \
+  --weight_decay=0
 ```
 
 ### Evaluation
@@ -68,17 +67,25 @@ python main.py --mode train \
 Evaluate single-step predictions:
 ```bash
 python main.py --mode eval \
-  --dataset WaterDropSample \
-  --message_passing_steps 5 \
-  --eval_split test
+  --dataset=WaterDropSample \
+  --message_passing_steps=5 \
+  --eval_split=test
 ```
 
 Generate trajectory rollouts:
 ```bash
 python main.py --mode eval_rollout \
-  --dataset WaterDropSample \
-  --message_passing_steps 5 \
-  --eval_split test
+  --dataset=WaterDropSample \
+  --message_passing_steps=5 \
+  --eval_split=test
+```
+
+Animate trajectory rollouts:
+```bash
+python render_rollout.py \
+  --rollout_path=rollouts/{dataset}/{model}/rollout_{split}_{num}.pkl \
+  --step_stride=3 \
+  --block_on_show=True
 ```
 
 ## Key Parameters
@@ -86,7 +93,7 @@ python main.py --mode eval_rollout \
 - `--mode`: Training or evaluation mode (`train`, `eval`, `eval_rollout`)
 - `--dataset`: Name of dataset to use
 - `--batch_size`: Number of samples per batch
-- `--max_episodes`: Number of training episodes
+- `--num_epochs`: Number of training epochs
 - `--message_passing_steps`: Number of GNN message passing steps
 - `--gnn_type`: Type of GNN to use (`gcn`, `gat`)
 - `--noise_std`: Standard deviation of noise injection
