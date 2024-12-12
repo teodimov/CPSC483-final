@@ -457,7 +457,7 @@ def parse_arguments():
                         help='Number of saving step.')
     parser.add_argument('--noise_std', default=0.0003, type=float,
                         help='The std deviation of the noise.')
-    parser.add_argument('--model_path', default="model", type=str,
+    parser.add_argument('--model_path', default="models", type=str,
                         help='The path for saving checkpoints of the model.')
     parser.add_argument('--output_path', default="rollouts", type=str,
                         help='The path for saving outputs (e.g. rollouts).')

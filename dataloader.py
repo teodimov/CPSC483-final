@@ -167,3 +167,4 @@ def prepare_rollout_inputs(features: Dict[str, torch.Tensor]) -> Tuple[Dict[str,
         output_dict['step_context'] = features['step_context']
     
     return output_dict, pos[:, -1]
+    
