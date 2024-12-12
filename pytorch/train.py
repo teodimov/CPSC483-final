@@ -338,22 +338,48 @@ def train_one_step_model(args):
     # Reset train loader
     train_loader = PyGDataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
+    def get_lr(step):
+        warmup_steps = 1000
+        decay_steps = 100000  # 100k
+        min_lr = 1e-6
+        max_lr = 1e-3
+        
+        # Linear warmup
+        if step < warmup_steps:
+            return (step / warmup_steps) * max_lr
+        
+        # Cosine decay
+        step_after_warmup = step - warmup_steps
+        decay_steps_after_warmup = decay_steps - warmup_steps
+        decay = 0.5 * (1 + math.cos(math.pi * step_after_warmup / decay_steps_after_warmup))
+        return min_lr + (max_lr - min_lr) * decay
+
     # Training loop
-    optimizer = optim.Adam(simulator.parameters(), lr=1e-4)
+    optimizer = optim.Adam(simulator.parameters(), lr=1e-3)
+    running_loss = 0.0
+    best_loss = float('inf')
     step = 0
     simulator.train()
 
-    for epoch in range(1, 2):
+    while step < args.num_steps:
         for data in train_loader:
+            if step >= args.num_steps:
+                break
+                
             data = data.to(DEVICE)
             num_nodes = data.x.size(0)
+
+            # Update learning rate
+            current_lr = get_lr(step)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = current_lr
 
             # Reconstruct position sequence
             input_pos = data.x.view(num_nodes, sequence_length - 1, dim)
             target_position = data.y
             position_sequence = torch.cat([input_pos, target_position.unsqueeze(1)], dim=1)
 
-            # Get batch information and context
+            # Get batch information
             unique_graph_ids, counts = torch.unique(data.batch, return_counts=True)
             n_particles_per_example = counts
             global_context = getattr(data, 'step_context', None)
@@ -380,27 +406,47 @@ def train_one_step_model(args):
                 global_context=global_context
             )
 
-            # Compute loss (only on non-kinematic particles)
+            # Compute loss on non-kinematic particles only
             loss = (pred_acc - target_acc)**2
             loss = loss.sum(dim=-1)
             loss = loss * non_kin_mask.float()
-            loss = loss.sum() / non_kin_mask.sum()
+            num_non_kinematic = non_kin_mask.float().sum()
+            loss = loss.sum() / (num_non_kinematic + 1e-8)
+
+            # L2 regularization
+            l2_lambda = 1e-5
+            l2_reg = torch.tensor(0., device=DEVICE)
+            for param in simulator.parameters():
+                l2_reg += torch.norm(param)
+            loss = loss + l2_lambda * l2_reg
 
             optimizer.zero_grad()
             loss.backward()
+            
+            # Add gradient clipping
+            torch.nn.utils.clip_grad_norm_(simulator.parameters(), max_norm=1.0)
+            
             optimizer.step()
 
-            step += 1
-            # Continuing from the training loop...
-            if step % 10 == 0:
-                print(f"Step {step}, loss {loss.item()}")
-                torch.save(simulator.state_dict(), os.path.join(args.model_path, 'checkpoint.pt'))
+            running_loss += loss.item()
 
-            if step >= args.num_steps:
-                torch.save(simulator.state_dict(), os.path.join(args.model_path, 'checkpoint.pt'))
-                print(f"Reached max steps ({args.num_steps}). Final checkpoint saved.")
-                return
-    
+            if step % 10 == 0:
+                avg_loss = running_loss / 10
+                print(f"Step {step}, LR {current_lr:.2e}, Avg Loss {avg_loss:.6f}")
+                running_loss = 0.0
+                
+                # Save best model if loss improved
+                if avg_loss < best_loss:
+                    best_loss = avg_loss
+                    torch.save(simulator.state_dict(), 
+                             os.path.join(args.model_path, 'best_model.pt'))
+                
+                # Always save latest checkpoint
+                torch.save(simulator.state_dict(), 
+                         os.path.join(args.model_path, 'checkpoint.pt'))
+
+            step += 1
+
     # Save final checkpoint
     torch.save(simulator.state_dict(), os.path.join(args.model_path, 'checkpoint.pt'))
     print(f"Training completed. Final checkpoint saved at step {step}.")
