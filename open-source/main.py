@@ -13,8 +13,20 @@ from rollout import rollout
 from utils import fix_seed, _combine_std, _read_metadata
 from utils import *
 
-def _get_simulator(model_kwargs, metadata, acc_noise_std, vel_noise_std, args):
-    """Initialize simulator with proper normalization statistics."""
+def _get_simulator(model_kwargs: dict, metadata: dict, acc_noise_std: float, 
+                  vel_noise_std: float, args) -> 'LearnedSimulator':
+    """Initialize simulator with proper normalization statistics.
+    
+    Args:
+        model_kwargs: Dictionary containing model parameters like latent_size, mlp_hidden_size etc.
+        metadata: Dictionary containing simulation metadata including dimensions, bounds etc.
+        acc_noise_std: Standard deviation of acceleration noise
+        vel_noise_std: Standard deviation of velocity noise
+        args: Additional arguments passed from command line
+        
+    Returns:
+        LearnedSimulator: Initialized simulator instance with proper normalization
+    """
     cast = lambda v: np.array(v, dtype=np.float32)
     
     acceleration_stats = Stats(
@@ -26,7 +38,7 @@ def _get_simulator(model_kwargs, metadata, acc_noise_std, vel_noise_std, args):
         _combine_std(cast(metadata['vel_std']), vel_noise_std))
     
     normalization_stats = {'acceleration': acceleration_stats,
-                           'velocity': velocity_stats}
+                          'velocity': velocity_stats}
     
     if 'context_mean' in metadata:
         context_stats = Stats(
@@ -46,8 +58,26 @@ def _get_simulator(model_kwargs, metadata, acc_noise_std, vel_noise_std, args):
     )
     return simulator
 
-def eval_one_step(args):
-    """Evaluate model on single-step predictions."""
+def eval_one_step(args: argparse.Namespace) -> None:
+    """Evaluate model on single-step predictions.
+    
+    Loads a trained model and evaluates its performance on single-step predictions
+    using the specified dataset split. Calculates MSE loss for both position and
+    acceleration predictions.
+    
+    Args:
+        args: Namespace containing:
+            - dataset: Name of the dataset to evaluate on
+            - eval_split: Which data split to use (train/valid/test)
+            - batch_size: Batch size for evaluation
+            - model_path: Path to saved model checkpoints
+            - gnn_type: Type of GNN used
+            - noise_std: Standard deviation for noise
+            - message_passing_steps: Number of message passing steps
+            
+    Raises:
+        ValueError: If no model checkpoint is found
+    """
     # Data setup
     sequence_dataset = OneStepDataset(args.dataset, args.eval_split)
     sequence_dataloader = DataLoader(
@@ -67,28 +97,30 @@ def eval_one_step(args):
     )
     
     # Initialize simulator
-    simulator = _get_simulator(model_kwargs, metadata,
-                               vel_noise_std=args.noise_std,
-                               acc_noise_std=args.noise_std, args=args)
+    simulator = _get_simulator(
+        model_kwargs=model_kwargs,
+        metadata=metadata,
+        vel_noise_std=args.noise_std,
+        acc_noise_std=args.noise_std,
+        args=args
+    )
     
     # Load model checkpoint
-    path = f'{args.model_path}/{args.dataset}/{args.gnn_type}'
-    files = os.listdir(path)
-    file_name = None
-    for file in files:
-        if file.startswith('best'):
-            file_name = os.path.join(path, file)
+    checkpoint_path = f'{args.model_path}/{args.dataset}/{args.gnn_type}'
+    checkpoint_file = None
+    for file in os.listdir(checkpoint_path):
+        if file.startswith('step'):
+            checkpoint_file = os.path.join(checkpoint_path, file)
             break
     
-    if not file_name:
+    if not checkpoint_file:
         raise ValueError("No checkpoint exists!")
-    else:
-        print(f"Load checkpoint from: {file_name}")
+    print(f"Load checkpoint from: {checkpoint_file}")
     
-    simulator_state_dict = torch.load(file_name, map_location=device)
+    simulator_state_dict = torch.load(checkpoint_file, map_location=device)
     simulator.load_state_dict(simulator_state_dict)
 
-    # evaluation loop
+    # Evaluation loop
     mse_loss = F.mse_loss
     total_loss = []
     time_step = 0
@@ -96,26 +128,29 @@ def eval_one_step(args):
     print("################### Begin Evaluate One Step #######################")
     with torch.no_grad():
         for features, labels in sequence_dataloader:
+            # Move data to device
             labels = labels.to(device)
+            target_next_position = labels
+            
+            # Move features to device
             features['positions'] = features['positions'].to(device)
             features['particle_types'] = features['particle_types'].to(device)
             features['n_particles_per_example'] = features['n_particles_per_example'].to(device)
             if 'step_context' in features:
                 features['step_context'] = features['step_context'].to(device)
-            target_next_position = labels
 
-            # add noise
+            # Generate noise and get predictions
             sampled_noise = get_random_walk_noise_for_position_sequence(
                 features['positions'],
                 noise_std_last_step=args.noise_std
             ).to(device)
 
-            # get predictions
             predicted_next_position = simulator(
                 position_sequence=features['positions'],
                 n_particles_per_example=features['n_particles_per_example'],
                 particle_types=features['particle_types'],
-                global_context=features.get('step_context'))
+                global_context=features.get('step_context')
+            )
 
             pred_target = simulator.get_predicted_and_target_normalized_accelerations(
                 next_position=target_next_position,
@@ -123,17 +158,20 @@ def eval_one_step(args):
                 position_sequence_noise=sampled_noise,
                 n_particles_per_example=features['n_particles_per_example'],
                 particle_types=features['particle_types'],
-                global_context=features.get('step_context'))
+                global_context=features.get('step_context')
+            )
             pred_acceleration, target_acceleration = pred_target
 
-            # calc losses
+            # Calculate losses
             loss_mse = mse_loss(pred_acceleration, target_acceleration)
             one_step_position_mse = mse_loss(predicted_next_position, target_next_position)
             total_loss.append(one_step_position_mse)
             
-            print(f"step: {time_step}\t loss_mse: {loss_mse:.2f}\t one_step_position_mse: {one_step_position_mse * 1e9:.2f}e-9.")
+            print(f"step: {time_step}\t loss_mse: {loss_mse:.2f}\t "
+                  f"one_step_position_mse: {one_step_position_mse * 1e9:.2f}e-9.")
             time_step += 1
 
+        # Calculate and print average loss
         average_loss = torch.tensor(total_loss).mean().item()
         print(f"Average one step loss is: {average_loss * 1e9}e-9.")
 
@@ -159,7 +197,7 @@ def eval_rollout(args):
     simulator = _get_simulator(model_kwargs, metadata,
                                vel_noise_std=args.noise_std,
                                acc_noise_std=args.noise_std, args=args)
-    
+
     num_steps = metadata['sequence_length'] - INPUT_SEQUENCE_LENGTH
 
     # load model checkpoint
@@ -167,17 +205,17 @@ def eval_rollout(args):
     output_path = f'{args.output_path}/{args.dataset}/{args.gnn_type}'
     files = os.listdir(model_path)
     file_name = None
-    
+
     for file in files:
-        if file.startswith('best'):
+        if file.startswith('step'):
             file_name = os.path.join(model_path, file)
             break
-    
+
     if not file_name:
         raise ValueError("No checkpoint exists!")
     else:
         print(f"Load checkpoint from: {file_name}")
-    
+
     simulator_state_dict = torch.load(file_name, map_location=device)
     simulator.load_state_dict(simulator_state_dict)
 
@@ -218,11 +256,29 @@ def eval_rollout(args):
         average_loss = torch.tensor(total_loss).mean().item()
         print(f"Average rollout loss is: {average_loss * 1e3:.2f}e-3.")
 
-def train(args):
-    """Train the simulator model."""
+def train(args: argparse.Namespace) -> None:
+    """Train the simulator model.
+    
+    Performs training of the particle simulator using the provided configuration.
+    Includes periodic validation and model checkpointing of best performing models.
+    
+    Args:
+        args: Configuration namespace containing:
+            - seed: Random seed for reproducibility
+            - dataset: Name of dataset to train on
+            - batch_size: Training batch size
+            - noise_std: Standard deviation for noise injection
+            - lr: Initial learning rate
+            - weight_decay: Weight decay for optimizer
+            - max_episodes: Number of training episodes
+            - test_step: Steps between validation
+            - model_path: Path to save model checkpoints
+            - message_passing_steps: Number of message passing steps
+            - gnn_type: Type of GNN model used
+    """
     fix_seed(args.seed)
 
-    # data setup
+    # Data setup
     train_dataset = OneStepDataset(args.dataset, 'train')
     train_dataloader = DataLoader(
         train_dataset,
@@ -232,20 +288,24 @@ def train(args):
     )
     valid_dataset = OneStepDataset(args.dataset, 'valid')
     num_valid_samples = len(valid_dataset)
-    test_valid_samples = 2000 # number of valid samples to be used
+    test_valid_samples = min(2000, num_valid_samples)  # number of valid samples to be used
 
-    # model initialization
+    # Model initialization
     metadata = _read_metadata(data_path=f"datasets/{args.dataset}")
     model_kwargs = dict(
-        latent_size = 128,
-        mlp_hidden_size = 128,
-        mlp_num_hidden_layers = 2,
-        num_message_passing_steps = args.message_passing_steps,
+        latent_size=128,
+        mlp_hidden_size=128,
+        mlp_num_hidden_layers=2,
+        num_message_passing_steps=args.message_passing_steps,
     )
 
-    simulator = _get_simulator(model_kwargs, metadata,
-                               vel_noise_std=args.noise_std,
-                               acc_noise_std=args.noise_std, args=args)
+    simulator = _get_simulator(
+        model_kwargs=model_kwargs,
+        metadata=metadata,
+        vel_noise_std=args.noise_std,
+        acc_noise_std=args.noise_std,
+        args=args
+    )
     
     # Optimization setup
     min_lr = 1e-6
@@ -260,20 +320,21 @@ def train(args):
     best_one_step_loss = float("inf")
     time_step = 0
 
-    # training loop
+    # Training loop
     print("################### Begin Training #######################")
-    for i in range(args.max_episodes+1):
-        print(f'Episode: {i}\n')
+    for episode in range(args.max_episodes + 1):
+        print(f'Episode: {episode}/{args.max_episodes}\n')
         for features, labels in train_dataloader:
+            # Move data to device
             labels = labels.to(device)
-            features['positions'] = features['positions'].to(device)
-            features['particle_types'] = features['particle_types'].to(device)
-            features['n_particles_per_example'] = features['n_particles_per_example'].to(device)
+            target_next_position = labels
+            
+            for key in ['positions', 'particle_types', 'n_particles_per_example']:
+                features[key] = features[key].to(device)
             if 'step_context' in features:
                 features['step_context'] = features['step_context'].to(device)
-            target_next_position = labels
 
-            # Add noise
+            # Add noise with masking
             sampled_noise = get_random_walk_noise_for_position_sequence(
                 features['positions'],
                 noise_std_last_step=args.noise_std
@@ -283,7 +344,7 @@ def train(args):
             noise_mask = non_kinematic_mask.unsqueeze(1).unsqueeze(2)
             sampled_noise *= noise_mask
 
-            # training step
+            # Forward pass and loss calculation
             simulator.train()
             optimizer.zero_grad()
 
@@ -293,41 +354,49 @@ def train(args):
                 position_sequence_noise=sampled_noise,
                 n_particles_per_example=features['n_particles_per_example'],
                 particle_types=features['particle_types'],
-                global_context=features.get('step_context'))
+                global_context=features.get('step_context')
+            )
             pred_acceleration, target_acceleration = pred_target
 
-            # calculate loss
+            # Calculate masked loss
             loss = (pred_acceleration[non_kinematic_mask] - 
-                    target_acceleration[non_kinematic_mask]) ** 2
+                   target_acceleration[non_kinematic_mask]) ** 2
             num_non_kinematic = torch.sum(non_kinematic_mask.to(torch.float32))
             loss = torch.sum(loss) / torch.sum(num_non_kinematic)
 
-            # optimize
+            # Optimization step
             loss.mean().backward()
             optimizer.step()
             
-            # update lr
+            # Learning rate decay
             decay_lr = decay_lr * (0.1 ** (1/5e6))
             for param_group in optimizer.param_groups:
                 param_group['lr'] = decay_lr + min_lr
 
-            # eval step
+            # Evaluation step
             simulator.eval()
             with torch.no_grad():
                 predicted_next_position = simulator(
                     position_sequence=features['positions'],
                     n_particles_per_example=features['n_particles_per_example'],
                     particle_types=features['particle_types'],
-                    global_context=features.get('step_context'))
+                    global_context=features.get('step_context')
+                )
 
                 loss_mse = mse_loss(pred_acceleration, target_acceleration)
                 one_step_position_mse = mse_loss(predicted_next_position, target_next_position)
-                print(f"step: {time_step}\t loss_mse: {loss_mse:.2f}\t one_step_position_mse: {one_step_position_mse*1e9:.2f}e-9.")
+                if time_step % 100 == 0:  # Print every 100 steps
+                    print(f"[Step {time_step}] "
+                          f"Loss MSE: {loss_mse:.4f}, "
+                          f"Position MSE: {one_step_position_mse*1e9:.4f}e-9")
                 time_step += 1
 
+                # Periodic validation
                 if time_step % args.test_step == 0:
                     print("################### Begin Evaluate One Step #######################")
                     total_loss = []
+                    
+                    # Create validation dataloader with subset of samples
                     test_indices = torch.tensor(np.random.choice(num_valid_samples, test_valid_samples, False))
                     valid_dataloader = DataLoader(
                         Subset(valid_dataset, test_indices),
@@ -336,34 +405,36 @@ def train(args):
                         shuffle=True
                     )
 
-                    for features, labels in valid_dataloader:
-                        labels = labels.to(device)
-                        features['positions'] = features['positions'].to(device)
-                        features['particle_types'] = features['particle_types'].to(device)
-                        features['n_particles_per_example'] = features['n_particles_per_example'].to(device)
-                        if 'step_context' in features:
-                            features['step_context'] = features['step_context'].to(device)
-                        target_next_position = labels
+                    # Validation loop
+                    for val_features, val_labels in valid_dataloader:
+                        val_labels = val_labels.to(device)
+                        for key in ['positions', 'particle_types', 'n_particles_per_example']:
+                            val_features[key] = val_features[key].to(device)
+                        if 'step_context' in val_features:
+                            val_features['step_context'] = val_features['step_context'].to(device)
+                        val_target_next_position = val_labels
 
-                        # get predictions
-                        predicted_next_position = simulator(
-                            position_sequence=features['positions'],
-                            n_particles_per_example=features['n_particles_per_example'],
-                            particle_types=features['particle_types'],
-                            global_context=features.get('step_context')
+                        # Compute validation predictions
+                        val_predicted_next_position = simulator(
+                            position_sequence=val_features['positions'],
+                            n_particles_per_example=val_features['n_particles_per_example'],
+                            particle_types=val_features['particle_types'],
+                            global_context=val_features.get('step_context')
                         )
                         
-                        # calculate validation loss
-                        one_step_position_mse = mse_loss(predicted_next_position, target_next_position)
-                        total_loss.append(one_step_position_mse)
+                        # Calculate validation loss
+                        val_one_step_position_mse = mse_loss(val_predicted_next_position, val_target_next_position)
+                        total_loss.append(val_one_step_position_mse)
 
-                    # save best model
+                    # Save best model checkpoint
                     average_one_step_loss = torch.tensor(total_loss).mean().item()
                     if average_one_step_loss < best_one_step_loss:
                         best_one_step_loss = average_one_step_loss
-                        file_name = f'{args.model_path}/{args.dataset}/{args.gnn_type}/step_{time_step}best_one_step_loss_{average_one_step_loss * 1e9:.2f}e-9.pt'
-                        print(f"Saving the best checkpoint, episode: {i}, one step position loss: {average_one_step_loss * 1e9:.2f}e-9.")
-                        torch.save(simulator.state_dict(), file_name)
+                        checkpoint_path = (f'{args.model_path}/{args.dataset}/{args.gnn_type}/'
+                                         f'step_{time_step}_best_one_step_loss_{average_one_step_loss * 1e9:.2f}e-9.pt')
+                        print(f"Saving the best checkpoint, episode: {episode}, "
+                              f"one step position loss: {average_one_step_loss * 1e9:.2f}e-9.")
+                        torch.save(simulator.state_dict(), checkpoint_path)
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -395,7 +466,7 @@ def parse_arguments():
     parser.add_argument('--message_passing_steps', default=10, type=int, help='number of GNN message passing steps.')
 
     # GNN settings
-    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--seed', type=int, default=483)
     parser.add_argument('--hidden_channels', type=int, default=32)
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--lr', type=float, default=1e-4)
