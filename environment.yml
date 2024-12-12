@@ -10,6 +10,7 @@ dependencies:
   - numpy==1.24.0
   - scikit-learn==1.6.0
   - scipy==1.9.3
+  - sympy==1.13.1
   - tensorflow==2.17.0
   - pytorch=2.5.0
   - torchvision=0.20.0
@@ -18,7 +19,6 @@ dependencies:
   - pip
   - pip:
     - texttable==1.7.0
-    - torch-geometric==2.6.1
     - torch-scatter==2.1.2
     - torch-sparse==0.6.18
-    
+    - torch-geometric==2.6.1
