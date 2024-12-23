@@ -2,33 +2,73 @@ from typing import Tuple
 import numpy as np
 import torch
 from sklearn.neighbors import KDTree
+from typing import Union
 
 def _compute_connectivity(
     positions: np.ndarray,
-    radius: float,
+    radius: Union[float, np.ndarray],
     add_self_edges: bool = True
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Get the indices of connected edges with radius connectivity.
-    Args:
-        positions: Positions of nodes in the graph. [num_nodes_in_graph, num_dims]
-        radius: Radius of connectivity.
-        add_self_edges: Whether to include self edges or not.
-    Returns:
-        senders indices [num_edges_in_graph]
-        receivers indices [num_edges_in_graph]
     """
+    Get the indices of connected edges with radius connectivity.
+
+    Args:
+        positions: Node positions in the graph. [num_nodes, num_dims]
+        radius: Connectivity radius (scalar or array of shape [num_nodes]).
+        add_self_edges: Whether to include self edges or not.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: senders and receivers indices of edges.
+    """
+    print(f"Positions shape: {positions.shape}, dtype: {positions.dtype}")
+    print(f"Radius type: {type(radius)}")
+    if isinstance(radius, np.ndarray):
+        print(f"Radius shape: {radius.shape}, dtype: {radius.dtype}")
+        print(f"Radius values: min={radius.min()}, max={radius.max()}")
+    elif isinstance(radius, (int, float)):
+        print(f"Radius scalar value: {radius}")
+        assert radius > 0, "Radius must be a positive scalar."
+
+    # If radius is a PyTorch tensor, convert it to NumPy array
+    if isinstance(radius, torch.Tensor):
+        print("Converting radius from PyTorch tensor to NumPy array.")
+        radius = radius.cpu().numpy()
+
+    # Validate radius shape
+
+    if isinstance(radius, np.ndarray):
+        if radius.ndim == 1 and radius.shape[0] == positions.shape[0]:
+            print("Radius validated successfully.")
+        else:
+            raise ValueError(
+                f"Radius must be scalar or 1D array of shape ({positions.shape[0],}), "
+                f"but got shape {radius.shape}."
+            )
+
+    # Initialize KDTree
     tree = KDTree(positions)
-    receivers_list = tree.query_radius(positions, r=radius)
+
+    # Query radius
+    try:
+        receivers_list = tree.query_radius(positions, r=radius)
+    except Exception as e:
+        print(f"Error in query_radius with positions shape {positions.shape} and radius {radius}")
+        raise e
+
+    # Generate sender and receiver indices
     num_nodes = positions.shape[0]
     senders = np.repeat(np.arange(num_nodes), [len(a) for a in receivers_list])
     receivers = np.concatenate(receivers_list, axis=0)
 
+    # Remove self-edges if specified
     if not add_self_edges:
         mask = senders != receivers
         senders = senders[mask]
         receivers = receivers[mask]
 
     return senders, receivers
+
+
 
 def compute_connectivity_for_batch(
     positions: np.ndarray, 

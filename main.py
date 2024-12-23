@@ -29,7 +29,8 @@ from utils import (
     Stats,
     NUM_PARTICLE_TYPES,
     INPUT_SEQUENCE_LENGTH,
-    device
+    device,
+    compute_adaptive_radius
 )
 
 def _get_simulator(
@@ -39,39 +40,93 @@ def _get_simulator(
     vel_noise_std: float,
     args
 ) -> 'LearnedSimulator':
-    """Initialize simulator with proper normalization statistics.
-    
-    Args:
-        model_kwargs: Dictionary containing model parameters like latent_size, mlp_hidden_size etc.
-        metadata: Dictionary containing simulation metadata including dimensions, bounds etc.
-        acc_noise_std: Standard deviation of acceleration noise
-        vel_noise_std: Standard deviation of velocity noise
-        args: Additional arguments passed from command line
-        
-    Returns:
-        LearnedSimulator: Initialized simulator instance with proper normalization
     """
+    Initialize simulator with proper normalization statistics and adaptive sampling.
+    """
+    # Cast metadata values for normalization
     cast = lambda v: np.array(v, dtype=np.float32)
-    
+
     acceleration_stats = Stats(
         cast(metadata['acc_mean']),
-        _combine_std(cast(metadata['acc_std']), acc_noise_std))
-    
+        _combine_std(cast(metadata['acc_std']), acc_noise_std)
+    )
     velocity_stats = Stats(
         cast(metadata['vel_mean']),
-        _combine_std(cast(metadata['vel_std']), vel_noise_std))
-    
-    normalization_stats = {'acceleration': acceleration_stats,
-                          'velocity': velocity_stats}
-    
+        _combine_std(cast(metadata['vel_std']), vel_noise_std)
+    )
+
+    normalization_stats = {
+        'acceleration': acceleration_stats,
+        'velocity': velocity_stats,
+    }
+
     if 'context_mean' in metadata:
         context_stats = Stats(
-            cast(metadata['context_mean']), cast(metadata['context_std']))
+            cast(metadata['context_mean']),
+            cast(metadata['context_std'])
+        )
         normalization_stats['context'] = context_stats
 
+    # Pad or truncate positions to ensure consistent dimensions
+    max_length = max(pos.shape[1] for pos in metadata['positions'])  # Maximum number of particles
+    dim = metadata['positions'][0].shape[2]  # Dimensionality of positions
+
+    padded_positions = []
+    for pos in metadata['positions']:
+        if pos.shape[1] < max_length:  # Pad
+            padding = np.zeros((pos.shape[0], max_length - pos.shape[1], dim))
+            padded_positions.append(np.concatenate((pos, padding), axis=1))
+        elif pos.shape[1] > max_length:  # Truncate
+            padded_positions.append(pos[:, :max_length, :])
+        else:  # No padding/truncation needed
+            padded_positions.append(pos)
+
+    padded_positions = np.array(padded_positions, dtype=np.float32)  # Convert list to NumPy array
+    print(f"Padded positions shape: {padded_positions.shape}")
+    padded_positions = torch.tensor(padded_positions, dtype=torch.float32)
+
+    # Check and compute gradients dynamically if missing
+    if 'gradients' not in metadata:
+        print("Gradients key missing. Computing gradients dynamically.")
+        metadata['gradients'] = []
+        for example_positions in metadata['positions']:
+            gradients = np.linalg.norm(
+                np.diff(example_positions, axis=0), axis=-1
+            ).mean(axis=0)  # Mean gradient magnitude across time
+            metadata['gradients'].append(gradients)
+
+    # Compute adaptive radius for each example
+    adaptive_radii = []
+    for example_index, example_positions in enumerate(metadata['positions']):
+        gradients = torch.tensor(metadata['gradients'][example_index], dtype=torch.float32)
+        base_radius = metadata['default_connectivity_radius']
+        adaptive_radius = compute_adaptive_radius(
+            positions=example_positions,
+            gradients=gradients,
+            base_radius=base_radius
+        )
+        adaptive_radii.append(adaptive_radius)
+
+    # Validate and reshape adaptive radii
+    all_radii = []
+    for radius, pos in zip(adaptive_radii, metadata['positions']):
+        num_particles = pos.shape[1]
+        if len(radius.shape) == 1 and radius.shape[0] == num_particles:
+            all_radii.append(radius)
+        else:
+            raise ValueError(f"Radius shape mismatch for example: {radius.shape}, expected ({num_particles},)")
+
+    # Flatten all radii for the simulator
+    adaptive_radius = torch.cat(all_radii, dim=0)
+    print(f"Adaptive radius shape: {adaptive_radius.shape}, expected total particles: {sum(pos.shape[1] for pos in metadata['positions'])}")
+    assert adaptive_radius.shape[0] == sum(pos.shape[1] for pos in metadata['positions']), (
+        f"Radius shape mismatch: expected ({sum(pos.shape[1] for pos in metadata['positions'])},), got {adaptive_radius.shape}"
+    )
+
+    # Initialize the simulator with adaptive sampling
     simulator = LearnedSimulator(
         num_dimensions=metadata['dim'],
-        connectivity_radius=metadata['default_connectivity_radius'],
+        connectivity_radius=adaptive_radius,
         graph_network_kwargs=model_kwargs,
         boundaries=metadata['bounds'],
         num_particle_types=NUM_PARTICLE_TYPES,
@@ -81,6 +136,9 @@ def _get_simulator(
         args=args,
     )
     return simulator
+
+
+
 
 def eval_one_step(args: argparse.Namespace) -> None:
     """Evaluate model on single-step predictions.
@@ -338,6 +396,7 @@ def train(args: argparse.Namespace) -> None:
         mlp_hidden_size=128,
         mlp_num_hidden_layers=2,
         num_message_passing_steps=args.message_passing_steps,
+        num_heads = 4
     )
 
     simulator = _get_simulator(

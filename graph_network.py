@@ -1,11 +1,14 @@
 import torch
 import torch.nn as nn
 from torch_scatter import scatter
+import torch.nn.functional as F
 from dataloader import NCDataset
 from models import GCN, GAT
 from message_passing import EdgeModel, NodeModel, GraphNetwork
 from typing import Optional, Dict, Union, List
 from dataclasses import dataclass
+from attention_layer import GraphAttentionLayer
+
 
 class MLP(nn.Module):
     """Multi-layer perceptron with configurable hidden layers."""
@@ -34,7 +37,7 @@ class MLP(nn.Module):
 
 class EncodeProcessDecode(nn.Module):
     """Encode-Process-Decode architecture for graph neural networks."""
-    
+
     def __init__(
         self,
         node_input_size: int,
@@ -46,9 +49,11 @@ class EncodeProcessDecode(nn.Module):
         output_size: int,
         device: str,
         args,
+        num_heads: int = 4
+
     ):
         super().__init__()
-        
+
         # Store configuration
         self._node_input_size = node_input_size
         self._edge_input_size = edge_input_size
@@ -59,7 +64,9 @@ class EncodeProcessDecode(nn.Module):
         self._output_size = output_size
         self.device = device
         self.args = args
-        
+        self.num_heads = num_heads
+
+
         # Build network components
         self._network_builder()
 
@@ -82,25 +89,21 @@ class EncodeProcessDecode(nn.Module):
         # Build processor networks
         self._processor_networks = nn.ModuleList()
         for _ in range(self._num_message_passing_steps):
-            if self.args.gnn_type == 'gcn':
-                processor = GCN(
-                    self._latent_size, 
-                    self.args.hidden_channels,
-                    self._latent_size, 
-                    self.args.num_gnn_layers,
-                    self.args.dropout, 
-                    use_bn=self.args.use_bn
+            if self.args.gnn_type == 'gat':
+                processor = GraphAttentionLayer(
+                    in_features=self._latent_size,
+                    out_features=self._latent_size // self.args.gat_heads,
+                    num_heads=self.args.gat_heads,
+                    dropout=self.args.dropout
                 ).to(self.device)
-            elif self.args.gnn_type == 'gat':
-                processor = GAT(
-                    self._latent_size, 
+            elif self.args.gnn_type == 'gcn':
+                processor = GCN(
+                    self._latent_size,
                     self.args.hidden_channels,
-                    self._latent_size, 
+                    self._latent_size,
                     self.args.num_gnn_layers,
-                    self.args.dropout, 
-                    self.args.use_bn,
-                    self.args.gat_heads, 
-                    self.args.out_heads
+                    self.args.dropout,
+                    use_bn=self.args.use_bn
                 ).to(self.device)
             elif self.args.gnn_type == 'interaction_net':
                 processor = GraphNetwork(
@@ -110,7 +113,7 @@ class EncodeProcessDecode(nn.Module):
                 ).to(self.device)
             else:
                 raise ValueError(f"Unsupported GNN type: {self.args.gnn_type}")
-            
+
             self._processor_networks.append(processor)
 
         # Build decoder
@@ -149,41 +152,41 @@ class EncodeProcessDecode(nn.Module):
             dim_size=num_nodes,
             reduce='mean'
         )
-        
+
         return latent_graph_0
 
-    def _process_step(self, processor_network_k: nn.Module, 
-                     latent_graph_prev_k: NCDataset) -> NCDataset:
+    def _process_step(self, processor_network_k: nn.Module, latent_graph_prev_k: NCDataset) -> NCDataset:
         """Performs one step of message passing."""
-        if self.args.gnn_type == 'interaction_net':
-            new_node_feature, new_edge_feature = processor_network_k(latent_graph_prev_k.graph)
-            latent_graph_k = NCDataset('latent_graph_k')
-            latent_graph_k.graph = {
-                'node_feat': latent_graph_prev_k.graph['node_feat'] + new_node_feature,
-                'edge_feat': latent_graph_prev_k.graph['edge_feat'] + new_edge_feature,
-                'global': None,
-                'n_node': latent_graph_prev_k.graph['n_node'],
-                'n_edge': latent_graph_prev_k.graph['n_edge'],
-                'edge_index': latent_graph_prev_k.graph['edge_index']
-            }
-        else:
-            new_node_feature = processor_network_k(latent_graph_prev_k)
-            latent_graph_k = NCDataset('latent_graph_k')
-            latent_graph_k.graph = {
-                'node_feat': latent_graph_prev_k.graph['node_feat'] + new_node_feature,
-                'edge_feat': None,
-                'global': None,
-                'n_node': latent_graph_prev_k.graph['n_node'],
-                'n_edge': latent_graph_prev_k.graph['n_edge'],
-                'edge_index': latent_graph_prev_k.graph['edge_index']
-            }
+        # Compute adjacency matrix
+        edge_index = latent_graph_prev_k.graph['edge_index']
+        num_nodes = torch.sum(latent_graph_prev_k.graph['n_node']).item()
+        
+        # Create sparse adjacency matrix from edge_index
+        adj = torch.zeros((num_nodes, num_nodes), device=edge_index.device)
+        adj[edge_index[0], edge_index[1]] = 1
+
+        # Call the processor network with adjacency
+        new_node_feature = processor_network_k(latent_graph_prev_k.graph['node_feat'], adj)
+
+        # Update latent graph with new node features
+        latent_graph_k = NCDataset('latent_graph_k')
+        latent_graph_k.graph = {
+            'node_feat': latent_graph_prev_k.graph['node_feat'] + new_node_feature,
+            'edge_feat': latent_graph_prev_k.graph['edge_feat'],
+            'global': latent_graph_prev_k.graph['global'],
+            'n_node': latent_graph_prev_k.graph['n_node'],
+            'n_edge': latent_graph_prev_k.graph['n_edge'],
+            'edge_index': latent_graph_prev_k.graph['edge_index']
+        }
+
         return latent_graph_k
+
 
     def _process(self, latent_graph_0: NCDataset) -> NCDataset:
         """Processes the latent graph through multiple message passing steps."""
         latent_graph_prev_k = latent_graph_0
         latent_graph_k = latent_graph_0
-        
+
         for processor_network_k in self._processor_networks:
             latent_graph_k = self._process_step(processor_network_k, latent_graph_prev_k)
             latent_graph_prev_k = latent_graph_k

@@ -36,6 +36,8 @@ class BaseDataset(Dataset):
     def __init__(self, dataset: str = 'Water', split: str = 'train'):
         positions, particle_types, step_context = self._load_data(dataset, split)
         self.features = self._prepare_features(positions, particle_types, step_context)
+        self.gradients = self.features['gradients']  # Store gradients separately
+
 
     def _load_data(self, dataset: str, split: str) -> Tuple[List, List, Optional[List]]:
         """Loads data from pickle files."""
@@ -59,14 +61,28 @@ class BaseDataset(Dataset):
         particle_types: List,
         step_context: Optional[List]
     ) -> Dict[str, List[torch.Tensor]]:
-        """Converts numpy arrays to torch tensors."""
+        """Converts numpy arrays to torch tensors and computes gradients."""
         features = {
             'positions': list(map(torch.tensor, positions)),
             'particle_types': list(map(torch.tensor, particle_types))
         }
         if step_context is not None:
             features['step_context'] = list(map(torch.tensor, step_context))
+        
+        # Compute gradients for each position set
+        gradients = []
+        for pos in positions:
+            pos_tensor = torch.tensor(pos)  # Shape: (T, N, dim)
+            # Compute gradients (difference between positions along spatial axes)
+            diff = torch.diff(pos_tensor, dim=0)  # Shape: (T-1, N, dim)
+            grad_magnitude = torch.norm(diff, dim=-1).mean(dim=0)  # Mean over time, Shape: (N,)
+            gradients.append(grad_magnitude)
+        
+        features['gradients'] = gradients  # Add gradients to features
         return features
+
+
+
 
     def __len__(self) -> int:
         return len(self.features['positions'])
